@@ -68,7 +68,7 @@ def get_result(task_id: str = Query(..., alias="task_id")):
     store.log(f"Original DDL count: {len(payload.get('ddl', []))}")
     store.log(f"Original queries count: {len(payload.get('queries', []))}")
 
-    # TODO (RU): Заглушка генерации результата.
+    # TODO: Заглушка генерации результата.
     # Здесь должен быть вызов модуля аналитики/LLM, который по входным DDL и выборке запросов
     # строит предложенные DDL-изменения, безопасные планируемые миграции и переписанные запросы.
     # Пока возвращаются фиктивные примеры для прототипа.
