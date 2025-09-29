@@ -8,7 +8,7 @@ UVICORN_CMD = [
     "python3",
     "-m",
     "uvicorn",
-    "lct.main:app",
+    "api.main:app",
     "--host",
     "127.0.0.1",
     "--port",
