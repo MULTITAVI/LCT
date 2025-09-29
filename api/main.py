@@ -34,7 +34,12 @@ def create_task(payload: NewTaskRequest):
     for q in payload.queries:
         store.log(f"Query id={q.queryid} runquantity={q.runquantity} query={q.query}")
 
-    # TODO: implement background processing; for now mark done
+    # TODO: Здесь заглушка — в продакшне нужно вынести обработку задачи
+    # в фоновые воркеры (Celery / RQ / custom worker) и очередь сообщений (Redis / RabbitMQ).
+    # - Синхронный путь должен вернуть taskid сразу, а реальная аналитика должна выполняться асинхронно.
+    # - Менеджер задач должен сохранять историю статусов (RUNNING, PENDING, FAILED, DONE), таймстемпы и ошибки.
+    # - Результаты анализа (DDL, миграции, переписанные запросы) нужно сохранять в БД/хранилище для последующего запроса.
+    # Текущая реализация помечает задачу как DONE для прототипа.
     store.TASKS[taskid]["status"] = "DONE"
     return TaskIdResponse(taskid=taskid)
 
@@ -63,7 +68,10 @@ def get_result(task_id: str = Query(..., alias="task_id")):
     store.log(f"Original DDL count: {len(payload.get('ddl', []))}")
     store.log(f"Original queries count: {len(payload.get('queries', []))}")
 
-    # TODO: generate real DDL/migrations/queries based on analysis
+    # TODO (RU): Заглушка генерации результата.
+    # Здесь должен быть вызов модуля аналитики/LLM, который по входным DDL и выборке запросов
+    # строит предложенные DDL-изменения, безопасные планируемые миграции и переписанные запросы.
+    # Пока возвращаются фиктивные примеры для прототипа.
     result_ddl = [
         {"statement": "CREATE SCHEMA catalog.newschema"},
         {"statement": "-- example new table DDL using full path\nCREATE TABLE catalog.newschema.new_table (id bigint, data varchar)"},
