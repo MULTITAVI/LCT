@@ -1,0 +1,10 @@
+*pycache*
+*env*
+*Env*
+*ENV*
+
+*env*/
+*Env*/
+*ENV*/
+
+!template.env
