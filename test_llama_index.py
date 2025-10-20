@@ -19,10 +19,6 @@ API_URL = os.getenv("API_URL")
 API_KEY = os.getenv("API_KEY")
 LLM_NAME = os.getenv("LLM_NAME")
 
-API_URL = "http://192.168.10.22:8110/v1"
-API_KEY = ""
-LLM_NAME = "Qwen3-Coder-30B-A3B-Instruct"
-
 print(API_URL)
 print(LLM_NAME)
 
