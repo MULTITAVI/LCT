@@ -1,4 +1,5 @@
 import os
+import logging
 from pathlib import Path
 import json
 from typing import Any
@@ -11,28 +12,24 @@ from llama_index.core.workflow import (
     step,
     Event,
 )
-
-# from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
 
-API_URL = os.getenv("API_URL")
-API_KEY = os.getenv("API_KEY")
-LLM_NAME = os.getenv("LLM_NAME")
 
-print(API_URL)
-print(LLM_NAME)
-
-# --- События для оркестрации ---
-
-class HypothesesReadyEvent(Event):
-    """Событие, сигнализирующее, что гипотезы сгенерированы."""
-    hypotheses: str
+# --- Настройка логирования ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("SQLWorkflow")
 
 
-# class OptimizationRequestEvent(Event):
-#     """Событие с запросом на оптимизацию."""
-#     ddl: str
-#     sql: str
+API_URL = os.getenv("API_URL", "http://192.168.10.22:8110/v1")
+API_KEY = os.getenv("API_KEY", "")
+LLM_NAME = os.getenv("LLM_NAME", "Qwen3-Coder-30B-A3B-Instruct")
+
+print("API_URL:", API_URL)
+print("LLM_NAME:", LLM_NAME)
 
 model = OpenAILike(
    model=LLM_NAME,
@@ -140,111 +137,120 @@ You **must** return **strictly valid JSON** with two fields:
 ```
 """
 
+class HypothesesReadyEvent(Event):
+    hypotheses: str
+
+
 class SQLWorkflow(Workflow):
-   """Workflow для оптимизации SQL-запросов и DDL."""
+    @step
+    async def generate_hypotheses(
+        self, ctx: Context, ev: StartEvent
+    ) -> HypothesesReadyEvent:
+        ddl = ev.get("ddl")
+        sql = ev.get("sql")
+        if ddl is None or sql is None:
+            raise ValueError("StartEvent must contain 'ddl' and 'sql'")
 
-   @step
-   async def generate_hypotheses(
-      self, 
-      ctx: Context, 
-      ev: StartEvent
-   ) -> HypothesesReadyEvent:
-      """
-      Шаг 1: Генерация гипотез на основе DDL и SQL.
-      """
+        await ctx.store.set("original_ddl", ddl)
+        await ctx.store.set("original_sql", sql)
 
-      ddl = ev.get("ddl")
-      sql = ev.get("sql")
-        
-      if ddl is None or sql is None:
-         raise ValueError("StartEvent must contain 'ddl' and 'sql'")
+        logger.info("🔍 Starting hypothesis generation...")
+        logger.info(f"Input DDL:\n{ddl}")
+        logger.info(f"Input SQL:\n{sql}")
 
-        # Сохраняем в контекст
-      await ctx.store.set("original_ddl", ddl)
-      await ctx.store.set("original_sql", sql)
+        prompt = (
+            f"{hypotesys_generator_sys_prompt}\n\n"
+            f"### Provided DDL:\n{ddl}\n\n"
+            f"### Provided SQL:\n{sql}\n\n"
+            "Now, generate your hypotheses:"
+        )
 
-      prompt = (
-         f"{hypotesys_generator_sys_prompt}\n\n"
-         f"### Provided DDL:\n{ev.ddl}\n\n"
-         f"### Provided SQL:\n{ev.sql}\n\n"
-         "Now, generate your hypotheses:"
-      )
+        hypotheses = await model.acomplete(prompt)
+        hypotheses_text = str(hypotheses).strip()
 
-      hypotheses = await model.acomplete(prompt)
-      return HypothesesReadyEvent(hypotheses=str(hypotheses))
+        logger.info("✅ Hypotheses generated:")
+        logger.info(hypotheses_text)
 
-   @step
-   async def optimize_code(
-      self, 
-      ctx: Context, 
-      ev: HypothesesReadyEvent, 
-      # req: OptimizationRequestEvent
-   ) -> StopEvent:
-      """
-      Шаг 2: Оптимизация DDL и SQL на основе сгенерированных гипотез.
-      """
+        return HypothesesReadyEvent(hypotheses=hypotheses_text)
 
-      original_ddl = await ctx.store.get("original_ddl")
-      original_sql = await ctx.store.get("original_sql")
-      
-      prompt = (
-         f"{de_sys_prompt}\n\n"
-         f"DDL:\n{original_ddl}\n\n"
-         f"SQL:\n{original_sql}\n\n"
-         f"Hypotheses from hypothesis_agent:\n{ev.hypotheses}\n\n"
-         "Now, provide your optimized DDL and SQL in the required JSON format:"
-      )
+    @step
+    async def optimize_code(
+        self, ctx: Context, ev: HypothesesReadyEvent
+    ) -> StopEvent:
+        original_ddl = await ctx.store.get("original_ddl")
+        original_sql = await ctx.store.get("original_sql")
 
-      response = await model.acomplete(prompt)
-      raw_output = str(response)
+        logger.info("🛠️ Starting code optimization based on hypotheses...")
+        logger.info(f"Hypotheses:\n{ev.hypotheses}")
 
-      # Попытка извлечь валидный JSON из ответа модели
-      try:
-         # Модель может обернуть ответ в ```json ... ```
-         start = raw_output.find("{")
-         end = raw_output.rfind("}") + 1
-         if start != -1 and end != -1:
-               json_str = raw_output[start:end]
-               result = json.loads(json_str)
-               # Валидация структуры
-               if "ddl" in result and "sql" in result:
-                  return StopEvent(result=result)
-      except (json.JSONDecodeError, ValueError):
-         pass
+        prompt = (
+            f"{de_sys_prompt}\n\n"
+            f"DDL:\n{original_ddl}\n\n"
+            f"SQL:\n{original_sql}\n\n"
+            f"Hypotheses from hypothesis_agent:\n{ev.hypotheses}\n\n"
+            "Now, provide your optimized DDL and SQL in the required JSON format:"
+        )
 
-      # Если не удалось распарсить, возвращаем оригинальные DDL и SQL
-      fallback_result = {
-         "ddl": original_ddl,
-         "sql": original_sql,
-      }
-      return StopEvent(result=fallback_result)
-   
+        response = await model.acomplete(prompt)
+        raw_output = str(response).strip()
+
+        logger.info("🤖 Raw LLM response:")
+        logger.info(raw_output)
+
+        # Попытка извлечь JSON
+        try:
+            start = raw_output.find("{")
+            end = raw_output.rfind("}") + 1
+            if start != -1 and end != -1:
+                json_str = raw_output[start:end]
+                logger.debug(f"Extracted JSON string:\n{json_str}")
+                result = json.loads(json_str)
+                if "ddl" in result and "sql" in result:
+                    logger.info("✅ Successfully parsed optimized result")
+                    return StopEvent(result=result)
+                else:
+                    logger.warning("❌ Parsed JSON missing 'ddl' or 'sql' keys")
+            else:
+                logger.warning("❌ No valid JSON braces found in LLM response")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"❌ JSON parsing failed: {e}")
+
+        # Fallback
+        logger.warning("⚠️ Falling back to original DDL and SQL")
+        fallback_result = {
+            "ddl": original_ddl,
+            "sql": original_sql,
+        }
+        return StopEvent(result=fallback_result)
+
+
 async def main():
-   TEST_DDL = """
-   CREATE TABLE quests.public.h_author (
-   id integer,
-   name varchar,
-   created_at timestamp(6)
-   ) WITH (format = 'PARQUET', format_version = 2);
-   """.strip()
+    TEST_DDL = """
+    CREATE TABLE quests.public.h_author (
+      id integer,
+      name varchar,
+      created_at timestamp(6)
+    ) WITH (format = 'PARQUET', format_version = 2);
+    """.strip()
 
-   TEST_SQL = """
-   SELECT sci.registration_source, 
-         COUNT(*) AS registered_users, 
-         COUNT(sci.first_purchase_date) AS buyers, 
-         ROUND(COUNT(sci.first_purchase_date) * 100.0 / COUNT(*), 2) AS conversion_rate 
-   FROM quests.public.s_client_personal_info sci 
-   GROUP BY sci.registration_source 
-   ORDER BY conversion_rate DESC;
-   """.strip()
+    TEST_SQL = """
+    SELECT sci.registration_source, 
+           COUNT(*) AS registered_users, 
+           COUNT(sci.first_purchase_date) AS buyers, 
+           ROUND(COUNT(sci.first_purchase_date) * 100.0 / COUNT(*), 2) AS conversion_rate 
+    FROM quests.public.s_client_personal_info sci 
+    GROUP BY sci.registration_source 
+    ORDER BY conversion_rate DESC;
+    """.strip()
 
-   # Инициализация и запуск workflow
-   workflow = SQLWorkflow(timeout=120, verbose=True)
-   result = await workflow.run(ddl=TEST_DDL, sql=TEST_SQL)
-   
-   print(json.dumps(result, indent=2, ensure_ascii=False))
+    workflow = SQLWorkflow(timeout=120, verbose=True)
+    result = await workflow.run(ddl=TEST_DDL, sql=TEST_SQL)
+    
+    print("\n" + "="*60)
+    print("FINAL RESULT:")
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
-   import asyncio
-   asyncio.run(main())
+    import asyncio
+    asyncio.run(main())
