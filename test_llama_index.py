@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 import json
 from typing import Any
+from api.validator import is_sql_valid_trino
 
 from llama_index.core.workflow import (
     Workflow,
@@ -22,7 +23,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger("SQLWorkflow")
-
 
 API_URL = os.getenv("API_URL", "http://192.168.10.22:8110/v1")
 API_KEY = os.getenv("API_KEY", "")
@@ -108,7 +108,7 @@ You **must** return **strictly valid JSON** with two fields:
 ```json
 {
   "ddl": "Optimized DDL query (CREATE TABLE ...). If there are no changes, the original DDL.",
-"sql": "Optimized SQL query. If there are no changes, use the source SQL."
+   "sql": "Optimized SQL query. If there are no changes, use the source SQL."
 }
 ``
 
@@ -138,7 +138,7 @@ You **must** return **strictly valid JSON** with two fields:
 """
 
 class HypothesesReadyEvent(Event):
-    hypotheses: str
+   hypotheses: str
 
 
 class SQLWorkflow(Workflow):
@@ -222,35 +222,23 @@ class SQLWorkflow(Workflow):
             "sql": original_sql,
         }
         return StopEvent(result=fallback_result)
-
+    
 
 async def main():
-    TEST_DDL = """
-    CREATE TABLE quests.public.h_author (
-      id integer,
-      name varchar,
-      created_at timestamp(6)
-    ) WITH (format = 'PARQUET', format_version = 2);
-    """.strip()
+   with open("data/flights.json", 'r') as f:
+      test_data = json.load(f)
 
-    TEST_SQL = """
-    SELECT sci.registration_source, 
-           COUNT(*) AS registered_users, 
-           COUNT(sci.first_purchase_date) AS buyers, 
-           ROUND(COUNT(sci.first_purchase_date) * 100.0 / COUNT(*), 2) AS conversion_rate 
-    FROM quests.public.s_client_personal_info sci 
-    GROUP BY sci.registration_source 
-    ORDER BY conversion_rate DESC;
-    """.strip()
+   TEST_DDL = test_data["ddl"][0]["statement"]
+   TEST_SQL = test_data["queries"][0]["query"]
 
-    workflow = SQLWorkflow(timeout=120, verbose=True)
-    result = await workflow.run(ddl=TEST_DDL, sql=TEST_SQL)
-    
-    print("\n" + "="*60)
-    print("FINAL RESULT:")
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+   workflow = SQLWorkflow(timeout=120, verbose=True)
+   result = await workflow.run(ddl=TEST_DDL, sql=TEST_SQL)
+
+   print("\n" + "="*60)
+   print("FINAL RESULT:")
+   print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+   import asyncio
+   asyncio.run(main())
